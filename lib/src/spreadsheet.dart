@@ -13,7 +13,8 @@ String _normalizeNewLine(String text) {
   return text.replaceAll('\r\n', '\n');
 }
 
-SpreadsheetDecoder _newSpreadsheetDecoder(Archive archive, bool update) {
+SpreadsheetDecoder _newSpreadsheetDecoder(
+    Archive archive, bool update, bool raw) {
   // Lookup at file format
   String? format;
 
@@ -34,9 +35,9 @@ SpreadsheetDecoder _newSpreadsheetDecoder(Archive archive, bool update) {
 
   switch (format) {
     case _spreasheetOds:
-      return OdsDecoder(archive, update: update);
+      return OdsDecoder(archive, update: update, raw: raw);
     case _spreasheetXlsx:
-      return XlsxDecoder(archive, update: update);
+      return XlsxDecoder(archive, update: update, raw: raw);
     default:
       throw UnsupportedError('Spreadsheet format unsupported');
   }
@@ -45,6 +46,7 @@ SpreadsheetDecoder _newSpreadsheetDecoder(Archive archive, bool update) {
 /// Decode a spreadsheet file.
 abstract class SpreadsheetDecoder {
   late bool _update;
+  late bool _raw;
   late Archive _archive;
   late Map<String, XmlElement> _sheets;
   late Map<String, XmlDocument> _xmlFiles;
@@ -64,15 +66,15 @@ abstract class SpreadsheetDecoder {
   SpreadsheetDecoder();
 
   factory SpreadsheetDecoder.decodeBytes(List<int> data,
-      {bool update = false, bool verify = false}) {
+      {bool update = false, bool verify = false, bool raw = false}) {
     var archive = ZipDecoder().decodeBytes(data, verify: verify);
-    return _newSpreadsheetDecoder(archive, update);
+    return _newSpreadsheetDecoder(archive, update, raw);
   }
 
-  factory SpreadsheetDecoder.decodeBuffer(InputStreamBase input,
-      {bool update = false, bool verify = false}) {
-    var archive = ZipDecoder().decodeBuffer(input, verify: verify);
-    return _newSpreadsheetDecoder(archive, update);
+  factory SpreadsheetDecoder.decodeBuffer(InputStream input,
+      {bool update = false, bool verify = false, bool raw = false}) {
+    var archive = ZipDecoder().decodeStream(input, verify: verify);
+    return _newSpreadsheetDecoder(archive, update, raw);
   }
 
   /// Dump XML content (for debug purpose)
@@ -169,7 +171,7 @@ abstract class SpreadsheetDecoder {
       var content = utf8.encode(xml);
       _archiveFiles[xmlFile] = ArchiveFile(xmlFile, content.length, content);
     }
-    return ZipEncoder().encode(_cloneArchive(_archive)) as List<int>;
+    return ZipEncoder().encode(_cloneArchive(_archive));
   }
 
   /// Encode data url
@@ -188,10 +190,10 @@ abstract class SpreadsheetDecoder {
         if (_archiveFiles.containsKey(file.name)) {
           copy = _archiveFiles[file.name]!;
         } else {
-          var content = file.content as Uint8List;
-          var compress = file.compress;
+          var content = file.content;
+          var compression = file.compression;
           copy = ArchiveFile(file.name, content.length, content)
-            ..compress = compress;
+            ..compression = compression;
         }
         clone.addFile(copy);
       }

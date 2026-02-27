@@ -101,9 +101,10 @@ class XlsxDecoder extends SpreadsheetDecoder {
   String? _sharedStringsTarget;
   final Map<String, String> _worksheetTargets = <String, String>{};
 
-  XlsxDecoder(Archive archive, {bool update = false}) {
+  XlsxDecoder(Archive archive, {bool update = false, bool raw = false}) {
     _archive = archive;
     _update = update;
+    _raw = raw;
     if (_update == true) {
       _archiveFiles = <String, ArchiveFile>{};
       _sheets = <String, XmlElement>{};
@@ -305,8 +306,11 @@ class XlsxDecoder extends SpreadsheetDecoder {
 
   void _parseContent() {
     var workbook = _archive.findFile('xl/workbook.xml');
-    workbook?.decompress();
-    var document = XmlDocument.parse(utf8.decode(workbook?.content));
+    if (workbook == null) {
+      throw FormatException('Missing required file: xl/workbook.xml');
+    }
+    workbook.decompress();
+    var document = XmlDocument.parse(utf8.decode(workbook.content));
     document.findAllElements('sheet').forEach((node) {
       _parseTable(node);
     });
@@ -321,9 +325,12 @@ class XlsxDecoder extends SpreadsheetDecoder {
     final namePath =
         target.startsWith('/') ? target.substring(1) : 'xl/$target';
     var file = _archive.findFile(namePath);
-    file?.decompress();
+    if (file == null) {
+      throw FormatException('Missing required file: $namePath');
+    }
+    file.decompress();
 
-    var content = XmlDocument.parse(utf8.decode(file?.content));
+    var content = XmlDocument.parse(utf8.decode(file.content));
     var worksheet = content.findElements('worksheet').first;
     var sheet = worksheet.findElements('sheetData').first;
 
@@ -386,7 +393,11 @@ class XlsxDecoder extends SpreadsheetDecoder {
         break;
       // boolean
       case 'b':
-        value = _parseValue(node.findElements('v').first) == '1';
+        if (_raw) {
+          value = _parseValue(node.findElements('v').first);
+        } else {
+          value = _parseValue(node.findElements('v').first) == '1';
+        }
         break;
       // error
       case 'e':
@@ -411,6 +422,10 @@ class XlsxDecoder extends SpreadsheetDecoder {
         var s = node.getAttribute('s');
         var valueNode = node.findElements('v');
         var content = valueNode.first;
+        if (_raw) {
+          value = _parseValue(content);
+          break;
+        }
         if (s != null) {
           var fmtId = _numFormats[int.parse(s)];
           // date

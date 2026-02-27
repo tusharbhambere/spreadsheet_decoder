@@ -101,6 +101,25 @@ var expectedFormat = <String, List<List>>{
   ]
 };
 
+var expectedRawFormat = <String, List<List>>{
+  'Sheet1': [
+    [
+      '1337',
+      '1337.42',
+      '1234.56',
+      '1',
+      'Hello World',
+      'One line\nTwo lines\nThree lines',
+      '0.124',
+      '38749',
+      '38749.567361111112',
+      '38749.567847222221',
+      '0.56736111111111109',
+      '0.56784722222222228',
+    ]
+  ]
+};
+
 var expectedEmptyColumn = <String, List<List>>{
   'EMPTY': [
     ['a1', null, 'c1'],
@@ -299,6 +318,14 @@ void testXlsx() {
       });
     });
 
+    test('Format file raw mode:', () {
+      var decoder = decode('format.xlsx', raw: true);
+      expect(decoder.tables.length, expectedRawFormat.keys.length);
+      decoder.tables.forEach((name, table) {
+        expect(table.rows, expectedRawFormat[name]);
+      });
+    });
+
     test('Empty column file:', () {
       var decoder = decode('empty_column.xlsx');
       expect(decoder.tables.length, expectedEmptyColumn.keys.length);
@@ -327,7 +354,7 @@ void testXlsx() {
       expect(decoder.tables.length, expectedNoPhonetics.keys.length);
       decoder.tables.forEach((name, table) {
         expect(table.rows, expectedNoPhonetics[name]);
-      });      
+      });
     });
   });
 }

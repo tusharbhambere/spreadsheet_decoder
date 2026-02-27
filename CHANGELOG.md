@@ -1,3 +1,6 @@
+## Unreleased
+Add `raw` decoding mode to return unconverted cell values as strings (no date/serial/type parsing)
+
 ## 2.3.0
 Update dependencies
 
