@@ -19,9 +19,12 @@ class OdsDecoder extends SpreadsheetDecoder {
   String get extension => '.ods';
   final Map<String, List<String>> _styleNames = {};
 
-  OdsDecoder(Archive archive, {bool update = false}) {
+  OdsDecoder(Archive archive,
+      {bool update = false,
+      String dateFormat = SpreadsheetDecoder.defaultDateFormat}) {
     _archive = archive;
     _update = update;
+    _dateFormat = dateFormat;
     _tables = <String, SpreadsheetTable>{};
     _parseContent();
   }
@@ -200,8 +203,9 @@ class OdsDecoder extends SpreadsheetDecoder {
             node.getAttribute('office:boolean-value')!.toLowerCase() == 'true';
         break;
       case 'date':
-        value = DateTime.parse(node.getAttribute('office:date-value')!)
-            .toIso8601String();
+        value = _formatDateTimeWithCode(
+            DateTime.parse(node.getAttribute('office:date-value')!),
+            _dateFormat);
         break;
       case 'time':
         value = node.getAttribute('office:time-value');

@@ -54,6 +54,19 @@ For XLSX format, this implementation supports the native Excel formats for date,
 
 Important: Excel often stores date cells as numeric serial values and only formats them for display. The decoder applies the workbook's format code to render the date as a string. If you need a fixed text representation independent of the workbook formatting, the source cell must be stored as text in the spreadsheet.
 
+### Customising the date output format
+
+By default, date cells (XLSX built-in numFmtIds 14-17, 22 and ODS `date` cells) are rendered as `yyyy-MM-dd` (e.g. `2008-07-21`). You can override this from the call site by passing `dateFormat`:
+
+    var decoder = SpreadsheetDecoder.decodeBytes(
+      bytes,
+      dateFormat: 'dd/MM/yyyy', // → 21/07/2008
+    );
+
+Supported tokens (case-insensitive): `yyyy`, `yy`, `mm`/`m` (month — context-sensitive vs minutes), `dd`/`d`/`ddd`/`dddd`, `hh`/`h`, `ss`/`s`, `AM/PM`. Any other characters in the pattern (`-`, `/`, `.`, spaces, etc.) are emitted as literal separators.
+
+For cells that use a custom `<numFmt>` format code declared in the workbook, the workbook's own format code is used unless you explicitly pass a non-default `dateFormat`, in which case your format wins.
+
 ## License
 
 The MIT License, see [LICENSE](https://github.com/sestegra/spreadsheet_decoder/raw/master/LICENSE).

@@ -327,9 +327,12 @@ class XlsxDecoder extends SpreadsheetDecoder {
   String? _sharedStringsTarget;
   final Map<String, String> _worksheetTargets = <String, String>{};
 
-  XlsxDecoder(Archive archive, {bool update = false}) {
+  XlsxDecoder(Archive archive,
+      {bool update = false,
+      String dateFormat = SpreadsheetDecoder.defaultDateFormat}) {
     _archive = archive;
     _update = update;
+    _dateFormat = dateFormat;
     if (_update == true) {
       _archiveFiles = <String, ArchiveFile>{};
       _sheets = <String, XmlElement>{};
@@ -661,10 +664,9 @@ class XlsxDecoder extends SpreadsheetDecoder {
           // date
           if (((fmtId >= 14) && (fmtId <= 17)) || (fmtId == 22)) {
             var delta = num.parse(_parseValue(content)) * 24 * 3600 * 1000;
-            var date = DateTime(1899, 12, 30);
-            value = date
-                .add(Duration(milliseconds: delta.toInt()))
-                .toIso8601String();
+            var date = DateTime(1899, 12, 30)
+                .add(Duration(milliseconds: delta.toInt()));
+            value = _formatDateTimeWithCode(date, _dateFormat);
             // time
           } else if (((fmtId >= 18) && (fmtId <= 21)) ||
               ((fmtId >= 45) && (fmtId <= 47))) {
@@ -675,20 +677,24 @@ class XlsxDecoder extends SpreadsheetDecoder {
                 '${_twoDigits(date.hour)}:${_twoDigits(date.minute)}:${_twoDigits(date.second)}';
             // number
           } else if (_customNumFormats.containsKey(fmtId)) {
-            // Custom number format declared in <numFmts>. Detect date/time
-            // by inspecting the format code for date/time tokens
-            // (y, d, h, s, or m used as month).
-            var code = _customNumFormats[fmtId]!;
+            // Custom number format declared in <numFmts>. If the caller
+            // supplied a non-default [dateFormat], honour it for date
+            // cells; otherwise fall back to the workbook's own format
+            // code so the visible output matches Excel.
+            var workbookCode = _customNumFormats[fmtId]!;
             var serial = num.parse(_parseValue(content));
-            if (_isDateTimeFormatCode(code)) {
+            if (_isDateTimeFormatCode(workbookCode)) {
               var delta = serial * 24 * 3600 * 1000;
               var date = DateTime(1899, 12, 30)
                   .add(Duration(milliseconds: delta.toInt()));
+              var code = _dateFormat == SpreadsheetDecoder.defaultDateFormat
+                  ? workbookCode
+                  : _dateFormat;
               value = _formatDateTimeWithCode(date, code);
-            } else if (_isTimeOnlyFormatCode(code)) {
+            } else if (_isTimeOnlyFormatCode(workbookCode)) {
               var delta = serial * 24 * 3600 * 1000;
               var date = DateTime(0).add(Duration(milliseconds: delta.toInt()));
-              value = _formatDateTimeWithCode(date, code);
+              value = _formatDateTimeWithCode(date, workbookCode);
             } else {
               value = serial;
             }

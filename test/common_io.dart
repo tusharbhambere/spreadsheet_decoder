@@ -11,9 +11,12 @@ String readBase64(String filename) {
   return base64Encode(_readBytes(filename));
 }
 
-SpreadsheetDecoder decode(String filename, {bool update = false}) {
+SpreadsheetDecoder decode(String filename,
+    {bool update = false, String? dateFormat}) {
   return SpreadsheetDecoder.decodeBytes(_readBytes(filename),
-      update: update, verify: true);
+      update: update,
+      verify: true,
+      dateFormat: dateFormat ?? SpreadsheetDecoder.defaultDateFormat);
 }
 
 void save(String file, List<int> data) {
