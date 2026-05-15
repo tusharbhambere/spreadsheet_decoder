@@ -19,10 +19,9 @@ class OdsDecoder extends SpreadsheetDecoder {
   String get extension => '.ods';
   final Map<String, List<String>> _styleNames = {};
 
-  OdsDecoder(Archive archive, {bool update = false, bool raw = false}) {
+  OdsDecoder(Archive archive, {bool update = false}) {
     _archive = archive;
     _update = update;
-    _raw = raw;
     _tables = <String, SpreadsheetTable>{};
     _parseContent();
   }
@@ -189,32 +188,6 @@ class OdsDecoder extends SpreadsheetDecoder {
   dynamic _readCell(XmlElement node) {
     dynamic value;
     var type = node.getAttribute('office:value-type');
-    if (_raw) {
-      switch (type) {
-        case 'float':
-        case 'percentage':
-        case 'currency':
-          value = node.getAttribute('office:value');
-          break;
-        case 'boolean':
-          value = node.getAttribute('office:boolean-value');
-          break;
-        case 'date':
-          value = node.getAttribute('office:date-value');
-          break;
-        case 'time':
-          value = node.getAttribute('office:time-value');
-          break;
-        case 'string':
-        default:
-          var list = <String>[];
-          node.findElements('text:p').forEach((child) {
-            list.add(_readString(child));
-          });
-          value = (list.isNotEmpty) ? list.join('\n') : null;
-      }
-      return value;
-    }
 
     switch (type) {
       case 'float':

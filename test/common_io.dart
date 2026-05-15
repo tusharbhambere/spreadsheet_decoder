@@ -11,10 +11,9 @@ String readBase64(String filename) {
   return base64Encode(_readBytes(filename));
 }
 
-SpreadsheetDecoder decode(String filename,
-    {bool update = false, bool raw = false}) {
+SpreadsheetDecoder decode(String filename, {bool update = false}) {
   return SpreadsheetDecoder.decodeBytes(_readBytes(filename),
-      update: update, verify: true, raw: raw);
+      update: update, verify: true);
 }
 
 void save(String file, List<int> data) {

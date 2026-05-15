@@ -1,5 +1,5 @@
 ## Unreleased
-Add `raw` decoding mode to return unconverted cell values as strings (no date/serial/type parsing)
+XLSX: decode dates with custom `<numFmt>` format codes (e.g. `dd/mm/yyyy`) using the workbook's own format code instead of leaking through as raw serial numbers. Removed the `raw` decoding mode in favour of always returning typed values.
 
 ## 2.3.0
 Update dependencies

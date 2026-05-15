@@ -16,7 +16,6 @@ Spreadsheet Decoder is a library for decoding and updating spreadsheets for ODS 
     main() {
       var bytes = File.fromUri(fullUri).readAsBytesSync();
       var decoder = SpreadsheetDecoder.decodeBytes(bytes);
-      var rawDecoder = SpreadsheetDecoder.decodeBytes(bytes, raw: true);
       var table = decoder.tables['Sheet1'];
       var values = table.rows[0];
       ...
@@ -34,7 +33,6 @@ Spreadsheet Decoder is a library for decoding and updating spreadsheets for ODS 
       var reader = FileReader();
       reader.onLoadEnd.listen((event) {
         var decoder = SpreadsheetDecoder.decodeBytes(reader.result);
-        var rawDecoder = SpreadsheetDecoder.decodeBytes(reader.result, raw: true);
         var table = decoder.tables['Sheet1'];
         var values = table.rows[0];
         ...
@@ -52,10 +50,9 @@ This implementation doesn't support following features:
 - hidden rows (visible in resulting tables)
 - hidden columns (visible in resulting tables)
 
-For XLSX format, this implementation only supports native Excel format for date, time and boolean type conversion when `raw` is `false`.
-In other words, custom format for date, time, boolean aren't supported and then file exported from LibreOffice as well.
+For XLSX format, this implementation supports the native Excel formats for date, time and boolean type conversion, plus custom `<numFmt>` format codes declared in the workbook (e.g. `dd/mm/yyyy`).
 
-To disable automatic type conversion and get raw cell content as strings, use `raw: true`.
+Important: Excel often stores date cells as numeric serial values and only formats them for display. The decoder applies the workbook's format code to render the date as a string. If you need a fixed text representation independent of the workbook formatting, the source cell must be stored as text in the spreadsheet.
 
 ## License
 

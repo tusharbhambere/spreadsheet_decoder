@@ -13,8 +13,7 @@ String _normalizeNewLine(String text) {
   return text.replaceAll('\r\n', '\n');
 }
 
-SpreadsheetDecoder _newSpreadsheetDecoder(
-    Archive archive, bool update, bool raw) {
+SpreadsheetDecoder _newSpreadsheetDecoder(Archive archive, bool update) {
   // Lookup at file format
   String? format;
 
@@ -35,9 +34,9 @@ SpreadsheetDecoder _newSpreadsheetDecoder(
 
   switch (format) {
     case _spreasheetOds:
-      return OdsDecoder(archive, update: update, raw: raw);
+      return OdsDecoder(archive, update: update);
     case _spreasheetXlsx:
-      return XlsxDecoder(archive, update: update, raw: raw);
+      return XlsxDecoder(archive, update: update);
     default:
       throw UnsupportedError('Spreadsheet format unsupported');
   }
@@ -46,7 +45,6 @@ SpreadsheetDecoder _newSpreadsheetDecoder(
 /// Decode a spreadsheet file.
 abstract class SpreadsheetDecoder {
   late bool _update;
-  late bool _raw;
   late Archive _archive;
   late Map<String, XmlElement> _sheets;
   late Map<String, XmlDocument> _xmlFiles;
@@ -66,15 +64,15 @@ abstract class SpreadsheetDecoder {
   SpreadsheetDecoder();
 
   factory SpreadsheetDecoder.decodeBytes(List<int> data,
-      {bool update = false, bool verify = false, bool raw = false}) {
+      {bool update = false, bool verify = false}) {
     var archive = ZipDecoder().decodeBytes(data, verify: verify);
-    return _newSpreadsheetDecoder(archive, update, raw);
+    return _newSpreadsheetDecoder(archive, update);
   }
 
   factory SpreadsheetDecoder.decodeBuffer(InputStream input,
-      {bool update = false, bool verify = false, bool raw = false}) {
+      {bool update = false, bool verify = false}) {
     var archive = ZipDecoder().decodeStream(input, verify: verify);
-    return _newSpreadsheetDecoder(archive, update, raw);
+    return _newSpreadsheetDecoder(archive, update);
   }
 
   /// Dump XML content (for debug purpose)

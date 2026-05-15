@@ -75,6 +75,229 @@ String _twoDigits(int n) {
   return '0$n';
 }
 
+String _fourDigits(int n) {
+  var v = n.abs().toString().padLeft(4, '0');
+  return n < 0 ? '-$v' : v;
+}
+
+const List<String> _monthNames = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December' //
+];
+
+const List<String> _dayNames = [
+  'Monday', 'Tuesday', 'Wednesday', 'Thursday',
+  'Friday', 'Saturday', 'Sunday' //
+];
+
+/// Strip literal/escaped portions of an Excel number format code so token
+/// scanning only sees real format tokens. Removes "..." literals,
+/// [..] bracket sections (colors, conditions, locale modifiers like
+/// `[$-409]`) and `\X` escape pairs.
+String _stripFormatLiterals(String code) {
+  var buf = StringBuffer();
+  var i = 0;
+  while (i < code.length) {
+    var ch = code[i];
+    if (ch == '"') {
+      i++;
+      while (i < code.length && code[i] != '"') {
+        i++;
+      }
+      if (i < code.length) i++;
+      continue;
+    }
+    if (ch == r'\' && i + 1 < code.length) {
+      i += 2;
+      continue;
+    }
+    if (ch == '[') {
+      while (i < code.length && code[i] != ']') {
+        i++;
+      }
+      if (i < code.length) i++;
+      continue;
+    }
+    buf.write(ch);
+    i++;
+  }
+  return buf.toString();
+}
+
+/// Returns true if the given Excel format code represents a date or
+/// date+time value (contains year or day tokens).
+bool _isDateTimeFormatCode(String code) {
+  var stripped = _stripFormatLiterals(code).toLowerCase();
+  var section = stripped.split(';').first;
+  return section.contains('y') || section.contains('d');
+}
+
+/// Returns true if the format code represents a time-only value
+/// (hours/minutes/seconds without a date part).
+bool _isTimeOnlyFormatCode(String code) {
+  var stripped = _stripFormatLiterals(code).toLowerCase();
+  var section = stripped.split(';').first;
+  if (section.contains('y') || section.contains('d')) return false;
+  return section.contains('h') || section.contains('s');
+}
+
+/// Format a [DateTime] using a (subset of) Excel number format tokens.
+/// Supports y/yy/yyyy, m/mm/mmm/mmmm/mmmmm (month or minute by context),
+/// d/dd/ddd/dddd, h/hh, s/ss, AM/PM and A/P. Literal characters and
+/// quoted text pass through unchanged.
+String _formatDateTimeWithCode(DateTime date, String code) {
+  var section = code.split(';').first;
+  var lower = section.toLowerCase();
+  var twelveHour = lower.contains('am/pm') || lower.contains('a/p');
+  var hour12 = ((date.hour + 11) % 12) + 1;
+
+  var buf = StringBuffer();
+  var i = 0;
+  var lastWasHour = false;
+  while (i < section.length) {
+    var ch = section[i];
+    var lc = ch.toLowerCase();
+
+    if (ch == '"') {
+      i++;
+      while (i < section.length && section[i] != '"') {
+        buf.write(section[i]);
+        i++;
+      }
+      if (i < section.length) i++;
+      continue;
+    }
+    if (ch == r'\' && i + 1 < section.length) {
+      buf.write(section[i + 1]);
+      i += 2;
+      continue;
+    }
+    if (ch == '[') {
+      var end = section.indexOf(']', i + 1);
+      if (end == -1) {
+        i++;
+        continue;
+      }
+      var inner = section.substring(i + 1, end).toLowerCase();
+      if (inner == 'h' || inner == 'hh') {
+        buf.write(date.hour.toString());
+      } else if (inner == 'm' || inner == 'mm') {
+        buf.write(date.minute.toString());
+      } else if (inner == 's' || inner == 'ss') {
+        buf.write(date.second.toString());
+      }
+      i = end + 1;
+      continue;
+    }
+
+    // AM/PM marker (check before single-char fallthrough)
+    if (i + 5 <= section.length &&
+        section.substring(i, i + 5).toLowerCase() == 'am/pm') {
+      var src = section.substring(i, i + 5);
+      var meridiem = date.hour < 12 ? 'AM' : 'PM';
+      if (src == src.toLowerCase()) meridiem = meridiem.toLowerCase();
+      buf.write(meridiem);
+      i += 5;
+      continue;
+    }
+    if (i + 3 <= section.length &&
+        section.substring(i, i + 3).toLowerCase() == 'a/p') {
+      var src = section.substring(i, i + 3);
+      var meridiem = date.hour < 12 ? 'A' : 'P';
+      if (src == src.toLowerCase()) meridiem = meridiem.toLowerCase();
+      buf.write(meridiem);
+      i += 3;
+      continue;
+    }
+
+    if ('ymdhs'.contains(lc)) {
+      var run = lc;
+      var j = i + 1;
+      while (j < section.length && section[j].toLowerCase() == lc) {
+        run += lc;
+        j++;
+      }
+      switch (lc) {
+        case 'y':
+          if (run.length >= 4) {
+            buf.write(_fourDigits(date.year));
+          } else {
+            buf.write(_twoDigits(date.year % 100));
+          }
+          lastWasHour = false;
+          break;
+        case 'd':
+          if (run.length == 1) {
+            buf.write(date.day.toString());
+          } else if (run.length == 2) {
+            buf.write(_twoDigits(date.day));
+          } else if (run.length == 3) {
+            buf.write(_dayNames[(date.weekday - 1) % 7].substring(0, 3));
+          } else {
+            buf.write(_dayNames[(date.weekday - 1) % 7]);
+          }
+          lastWasHour = false;
+          break;
+        case 'h':
+          var h = twelveHour ? hour12 : date.hour;
+          if (run.length == 1) {
+            buf.write(h.toString());
+          } else {
+            buf.write(_twoDigits(h));
+          }
+          lastWasHour = true;
+          break;
+        case 's':
+          if (run.length == 1) {
+            buf.write(date.second.toString());
+          } else {
+            buf.write(_twoDigits(date.second));
+          }
+          lastWasHour = false;
+          break;
+        case 'm':
+          var isMinute = lastWasHour;
+          if (!isMinute) {
+            var k = j;
+            while (k < section.length && section[k] == ' ') {
+              k++;
+            }
+            if (k < section.length && section[k].toLowerCase() == 's') {
+              isMinute = true;
+            }
+          }
+          if (isMinute) {
+            if (run.length == 1) {
+              buf.write(date.minute.toString());
+            } else {
+              buf.write(_twoDigits(date.minute));
+            }
+          } else {
+            if (run.length == 1) {
+              buf.write(date.month.toString());
+            } else if (run.length == 2) {
+              buf.write(_twoDigits(date.month));
+            } else if (run.length == 3) {
+              buf.write(_monthNames[date.month - 1].substring(0, 3));
+            } else if (run.length == 5) {
+              buf.write(_monthNames[date.month - 1].substring(0, 1));
+            } else {
+              buf.write(_monthNames[date.month - 1]);
+            }
+          }
+          lastWasHour = false;
+          break;
+      }
+      i = j;
+      continue;
+    }
+
+    buf.write(ch);
+    i++;
+  }
+  return buf.toString();
+}
+
 /// Returns the coordinates from a cell name.
 /// "A1" returns [1, 1] and the "B3" return [2, 3].
 List cellCoordsFromCellId(String cellId) {
@@ -97,14 +320,16 @@ class XlsxDecoder extends SpreadsheetDecoder {
 
   final List<String> _sharedStrings = <String>[];
   final List<int> _numFormats = <int>[];
+  // Custom number format codes from <numFmts> (numFmtId >= 164 typically,
+  // but spec allows any id when overridden). Maps numFmtId -> formatCode.
+  final Map<int, String> _customNumFormats = <int, String>{};
   String? _stylesTarget;
   String? _sharedStringsTarget;
   final Map<String, String> _worksheetTargets = <String, String>{};
 
-  XlsxDecoder(Archive archive, {bool update = false, bool raw = false}) {
+  XlsxDecoder(Archive archive, {bool update = false}) {
     _archive = archive;
     _update = update;
-    _raw = raw;
     if (_update == true) {
       _archiveFiles = <String, ArchiveFile>{};
       _sheets = <String, XmlElement>{};
@@ -260,6 +485,19 @@ class XlsxDecoder extends SpreadsheetDecoder {
     if (styles != null) {
       styles.decompress();
       var document = XmlDocument.parse(utf8.decode(styles.content));
+
+      // Parse custom numFmts (formatCode strings keyed by numFmtId).
+      var numFmtsElems = document.findAllElements('numFmts');
+      if (numFmtsElems.isNotEmpty) {
+        numFmtsElems.first.findElements('numFmt').forEach((node) {
+          var idAttr = node.getAttribute('numFmtId');
+          var codeAttr = node.getAttribute('formatCode');
+          if (idAttr != null && codeAttr != null) {
+            _customNumFormats[int.parse(idAttr)] = codeAttr;
+          }
+        });
+      }
+
       document
           .findAllElements('cellXfs')
           .first
@@ -393,11 +631,7 @@ class XlsxDecoder extends SpreadsheetDecoder {
         break;
       // boolean
       case 'b':
-        if (_raw) {
-          value = _parseValue(node.findElements('v').first);
-        } else {
-          value = _parseValue(node.findElements('v').first) == '1';
-        }
+        value = _parseValue(node.findElements('v').first) == '1';
         break;
       // error
       case 'e':
@@ -422,10 +656,6 @@ class XlsxDecoder extends SpreadsheetDecoder {
         var s = node.getAttribute('s');
         var valueNode = node.findElements('v');
         var content = valueNode.first;
-        if (_raw) {
-          value = _parseValue(content);
-          break;
-        }
         if (s != null) {
           var fmtId = _numFormats[int.parse(s)];
           // date
@@ -444,6 +674,24 @@ class XlsxDecoder extends SpreadsheetDecoder {
             value =
                 '${_twoDigits(date.hour)}:${_twoDigits(date.minute)}:${_twoDigits(date.second)}';
             // number
+          } else if (_customNumFormats.containsKey(fmtId)) {
+            // Custom number format declared in <numFmts>. Detect date/time
+            // by inspecting the format code for date/time tokens
+            // (y, d, h, s, or m used as month).
+            var code = _customNumFormats[fmtId]!;
+            var serial = num.parse(_parseValue(content));
+            if (_isDateTimeFormatCode(code)) {
+              var delta = serial * 24 * 3600 * 1000;
+              var date = DateTime(1899, 12, 30)
+                  .add(Duration(milliseconds: delta.toInt()));
+              value = _formatDateTimeWithCode(date, code);
+            } else if (_isTimeOnlyFormatCode(code)) {
+              var delta = serial * 24 * 3600 * 1000;
+              var date = DateTime(0).add(Duration(milliseconds: delta.toInt()));
+              value = _formatDateTimeWithCode(date, code);
+            } else {
+              value = serial;
+            }
           } else {
             value = num.parse(_parseValue(content));
           }
