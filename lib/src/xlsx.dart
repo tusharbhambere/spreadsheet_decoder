@@ -132,6 +132,40 @@ bool _isDateTimeFormatCode(String code) {
   return section.contains('y') || section.contains('d');
 }
 
+/// Returns true if [fmtId] is a built-in (implicit) number format that Excel
+/// renders as a date, meaning the cell value holds a date serial.
+///
+/// Besides the well-known western formats (14-17, 22) this covers the
+/// locale-specific ranges the spec reserves for CJK (27-36, 50-58) and Thai
+/// (71-81) date formats. Those ids carry no `<numFmt>` entry in the workbook,
+/// so they have to be recognised by id alone.
+bool _isBuiltInDateFormat(int fmtId) {
+  if (((fmtId >= 14) && (fmtId <= 17)) || (fmtId == 22)) return true;
+  // CJK: yyyy年m月, m月d日, yyyy年m月d日, era-based ge.m.d, ...
+  if ((fmtId >= 27) && (fmtId <= 31)) return true;
+  if (fmtId == 36) return true;
+  if ((fmtId >= 50) && (fmtId <= 54)) return true;
+  if ((fmtId == 57) || (fmtId == 58)) return true;
+  // Thai: ว/ด/ปปปป, ว-ดดด-ปป, d/m/bb, ...
+  if ((fmtId >= 71) && (fmtId <= 74)) return true;
+  if ((fmtId == 77) || (fmtId == 81)) return true;
+  return false;
+}
+
+/// Returns true if [fmtId] is a built-in number format that Excel renders as a
+/// time of day only (no date part). Companion to [_isBuiltInDateFormat].
+bool _isBuiltInTimeFormat(int fmtId) {
+  if ((fmtId >= 18) && (fmtId <= 21)) return true;
+  // CJK: h時mm分, 上午/下午h時mm分ss秒, ...
+  if ((fmtId >= 32) && (fmtId <= 35)) return true;
+  if ((fmtId >= 45) && (fmtId <= 47)) return true;
+  if ((fmtId == 55) || (fmtId == 56)) return true;
+  // Thai: ช:นน, นน:ทท.0, ...
+  if ((fmtId == 75) || (fmtId == 76)) return true;
+  if ((fmtId >= 78) && (fmtId <= 80)) return true;
+  return false;
+}
+
 /// Returns true if the format code represents a time-only value
 /// (hours/minutes/seconds without a date part).
 bool _isTimeOnlyFormatCode(String code) {
@@ -662,14 +696,13 @@ class XlsxDecoder extends SpreadsheetDecoder {
         if (s != null) {
           var fmtId = _numFormats[int.parse(s)];
           // date
-          if (((fmtId >= 14) && (fmtId <= 17)) || (fmtId == 22)) {
+          if (_isBuiltInDateFormat(fmtId)) {
             var delta = num.parse(_parseValue(content)) * 24 * 3600 * 1000;
             var date = DateTime(1899, 12, 30)
                 .add(Duration(milliseconds: delta.toInt()));
             value = _formatDateTimeWithCode(date, _dateFormat);
             // time
-          } else if (((fmtId >= 18) && (fmtId <= 21)) ||
-              ((fmtId >= 45) && (fmtId <= 47))) {
+          } else if (_isBuiltInTimeFormat(fmtId)) {
             var delta = num.parse(_parseValue(content)) * 24 * 3600 * 1000;
             var date = DateTime(0);
             date = date.add(Duration(milliseconds: delta.toInt()));
