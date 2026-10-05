@@ -13,8 +13,7 @@ String _normalizeNewLine(String text) {
   return text.replaceAll('\r\n', '\n');
 }
 
-SpreadsheetDecoder _newSpreadsheetDecoder(
-    Archive archive, bool update, String dateFormat) {
+SpreadsheetDecoder _newSpreadsheetDecoder(Archive archive, String dateFormat) {
   // Lookup at file format
   String? format;
 
@@ -35,15 +34,15 @@ SpreadsheetDecoder _newSpreadsheetDecoder(
 
   switch (format) {
     case _spreasheetOds:
-      return OdsDecoder(archive, update: update, dateFormat: dateFormat);
+      return OdsDecoder(archive, dateFormat: dateFormat);
     case _spreasheetXlsx:
-      return XlsxDecoder(archive, update: update, dateFormat: dateFormat);
+      return XlsxDecoder(archive, dateFormat: dateFormat);
     default:
       throw UnsupportedError('Spreadsheet format unsupported');
   }
 }
 
-/// Decode a spreadsheet file.
+/// Decode a spreadsheet file (read-only).
 abstract class SpreadsheetDecoder {
   /// Default output format used for date cells when none is provided.
   /// Format tokens follow Excel-style codes (case-insensitive):
@@ -53,12 +52,8 @@ abstract class SpreadsheetDecoder {
   /// pattern is matched case-insensitively.
   static const String defaultDateFormat = 'yyyy-MM-dd';
 
-  late bool _update;
   late String _dateFormat;
   late Archive _archive;
-  late Map<String, XmlElement> _sheets;
-  late Map<String, XmlDocument> _xmlFiles;
-  late Map<String, ArchiveFile> _archiveFiles;
 
   late Map<String, SpreadsheetTable> _tables;
 
@@ -73,149 +68,29 @@ abstract class SpreadsheetDecoder {
 
   SpreadsheetDecoder();
 
-  /// Decode an XLSX/ODS spreadsheet from raw [data] bytes.
+  /// Decode an XLSX/ODS/XLS spreadsheet from raw [data] bytes.
   ///
   /// Pass [dateFormat] to control how date cells are rendered as strings
   /// (e.g. `'dd/MM/yyyy'`, `'yyyy-MM-dd'`). Defaults to
   /// [defaultDateFormat] (`yyyy-MM-dd`).
   factory SpreadsheetDecoder.decodeBytes(List<int> data,
-      {bool update = false,
-      bool verify = false,
-      String dateFormat = defaultDateFormat}) {
+      {bool verify = false, String dateFormat = defaultDateFormat}) {
+    if (_hasCfbSignature(data)) {
+      return XlsDecoder(data, dateFormat: dateFormat);
+    }
     var archive = ZipDecoder().decodeBytes(data, verify: verify);
-    return _newSpreadsheetDecoder(archive, update, dateFormat);
+    return _newSpreadsheetDecoder(archive, dateFormat);
   }
 
+  /// Decode an XLSX/ODS/XLS spreadsheet from an [input] stream.
   factory SpreadsheetDecoder.decodeBuffer(InputStream input,
-      {bool update = false,
-      bool verify = false,
-      String dateFormat = defaultDateFormat}) {
+      {bool verify = false, String dateFormat = defaultDateFormat}) {
+    if (input.length >= _cfbSignature.length &&
+        _hasCfbSignature(input.peekBytes(_cfbSignature.length).toUint8List())) {
+      return XlsDecoder(input.toUint8List(), dateFormat: dateFormat);
+    }
     var archive = ZipDecoder().decodeStream(input, verify: verify);
-    return _newSpreadsheetDecoder(archive, update, dateFormat);
-  }
-
-  /// Dump XML content (for debug purpose)
-  String dumpXmlContent([String? sheet]);
-
-  void _checkSheetArguments(String sheet) {
-    if (_update != true) {
-      throw ArgumentError("'update' should be set to 'true' on constructor");
-    }
-    if (_sheets.containsKey(sheet) == false) {
-      throw ArgumentError("'$sheet' not found");
-    }
-  }
-
-  /// Insert column in [sheet] at position [columnIndex]
-  void insertColumn(String sheet, int columnIndex) {
-    _checkSheetArguments(sheet);
-    var table = _tables[sheet]!;
-
-    if (columnIndex < 0 || columnIndex > table._maxCols) {
-      throw RangeError.range(columnIndex, 0, table._maxCols);
-    }
-
-    for (var row in table.rows) {
-      row.insert(columnIndex, null);
-    }
-    table._maxCols++;
-  }
-
-  /// Remove column in [sheet] at position [columnIndex]
-  void removeColumn(String sheet, int columnIndex) {
-    _checkSheetArguments(sheet);
-    var table = _tables[sheet]!;
-
-    if (columnIndex < 0 || columnIndex >= table._maxCols) {
-      throw RangeError.range(columnIndex, 0, table._maxCols - 1);
-    }
-
-    for (var row in table.rows) {
-      row.removeAt(columnIndex);
-    }
-    table._maxCols--;
-  }
-
-  /// Insert row in [sheet] at position [rowIndex]
-  void insertRow(String sheet, int rowIndex) {
-    _checkSheetArguments(sheet);
-    var table = _tables[sheet]!;
-
-    if (rowIndex < 0 || rowIndex > table._maxRows) {
-      throw RangeError.range(rowIndex, 0, table._maxRows);
-    }
-
-    table.rows.insert(rowIndex, List.generate(table._maxCols, (_) => null));
-    table._maxRows++;
-  }
-
-  /// Remove row in [sheet] at position [rowIndex]
-  void removeRow(String sheet, int rowIndex) {
-    _checkSheetArguments(sheet);
-    var table = _tables[sheet]!;
-
-    if (rowIndex < 0 || rowIndex >= table._maxRows) {
-      throw RangeError.range(rowIndex, 0, table._maxRows - 1);
-    }
-
-    table.rows.removeAt(rowIndex);
-    table._maxRows--;
-  }
-
-  /// Update the contents from [sheet] of the cell [columnIndex]x[rowIndex] with indexes start from 0
-  void updateCell(String sheet, int columnIndex, int rowIndex, dynamic value) {
-    _checkSheetArguments(sheet);
-    var table = _tables[sheet]!;
-
-    if (columnIndex < 0 || columnIndex >= table._maxCols) {
-      throw RangeError.range(columnIndex, 0, table._maxCols - 1);
-    }
-    if (rowIndex < 0 || rowIndex >= table._maxRows) {
-      throw RangeError.range(rowIndex, 0, table._maxRows - 1);
-    }
-
-    table.rows[rowIndex][columnIndex] = value.toString();
-  }
-
-  /// Encode bytes after update
-  List<int> encode() {
-    if (_update != true) {
-      throw ArgumentError("'update' should be set to 'true' on constructor");
-    }
-
-    for (var xmlFile in _xmlFiles.keys) {
-      var xml = _xmlFiles[xmlFile].toString();
-      var content = utf8.encode(xml);
-      _archiveFiles[xmlFile] = ArchiveFile(xmlFile, content.length, content);
-    }
-    return ZipEncoder().encode(_cloneArchive(_archive));
-  }
-
-  /// Encode data url
-  String dataUrl() {
-    var buffer = StringBuffer();
-    buffer.write('data:$mediaType;base64,');
-    buffer.write(base64Encode(encode()));
-    return buffer.toString();
-  }
-
-  Archive _cloneArchive(Archive archive) {
-    var clone = Archive();
-    for (var file in archive.files) {
-      if (file.isFile) {
-        ArchiveFile copy;
-        if (_archiveFiles.containsKey(file.name)) {
-          copy = _archiveFiles[file.name]!;
-        } else {
-          var content = file.content;
-          var compression = file.compression;
-          copy = ArchiveFile(file.name, content.length, content)
-            ..compression = compression;
-        }
-        clone.addFile(copy);
-      }
-    }
-    return clone;
+    return _newSpreadsheetDecoder(archive, dateFormat);
   }
 
   void _normalizeTable(SpreadsheetTable table) {

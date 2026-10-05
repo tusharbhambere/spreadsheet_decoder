@@ -1,4 +1,10 @@
-## Unreleased
+## 3.0.0
+**Breaking:** the package is now read-only. Removed `updateCell`, `insertRow`, `removeRow`, `insertColumn`, `removeColumn`, `encode()`, `dataUrl()` and `dumpXmlContent()`, and the `update` parameter of `SpreadsheetDecoder.decodeBytes` / `decodeBuffer` (and of the `XlsxDecoder` / `OdsDecoder` constructors). Use `decodeBytes(bytes)` to read a spreadsheet; use version 2.x if you need to modify one.
+
+Add read-only support for legacy Excel `.xls` workbooks (BIFF8 and BIFF5/7, wrapped in an OLE2 compound file) through the existing `SpreadsheetDecoder.decodeBytes` / `decodeBuffer`. `.xls` files are returned as an `XlsDecoder`. Encrypted workbooks and `.xlsb` are reported with an `UnsupportedError`, corrupt files with a `FormatException`.
+
+XLSX: date and time cells no longer depend on the local time zone (they could show shifted hours in some zones, e.g. in `hh:mm` formats), and date serials beyond year 9999 are returned as numbers instead of throwing.
+
 XLSX: decode dates with custom `<numFmt>` format codes (e.g. `dd/mm/yyyy`) using the workbook's own format code instead of leaking through as raw serial numbers. Removed the `raw` decoding mode in favour of always returning typed values.
 
 Built-in date cells (numFmtId 14-17, 22) and ODS date cells now render as `yyyy-MM-dd` by default instead of an ISO timestamp like `2008-07-21T00:00:00.000`. Added a `dateFormat` parameter to `SpreadsheetDecoder.decodeBytes` and `SpreadsheetDecoder.decodeBuffer` so callers can choose any pattern (e.g. `dd/MM/yyyy`, `yyyy.MM.dd`); custom-numFmt date cells honour the caller's `dateFormat` when explicitly set, otherwise fall back to the workbook's own format code.

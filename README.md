@@ -4,7 +4,29 @@
 [![Coverage Status](https://coveralls.io/repos/sestegra/spreadsheet_decoder/badge.svg?branch=master)](https://coveralls.io/r/sestegra/spreadsheet_decoder?branch=master)
 [![Pub version](https://img.shields.io/pub/v/spreadsheet_decoder.svg)](https://pub.dartlang.org/packages/spreadsheet_decoder)
 
-Spreadsheet Decoder is a library for decoding and updating spreadsheets for ODS and XLSX files.
+Spreadsheet Decoder is a read-only library for decoding spreadsheets: XLSX (and XLSM/XLTX/XLTM), ODS and legacy XLS files. It cannot modify or write spreadsheets.
+
+## Supported formats
+
+| Format | Notes |
+|---|---|
+| `.xlsx` | |
+| `.xlsm` | macros (`vbaProject.bin`) are ignored, never executed |
+| `.xltx`, `.xltm` | |
+| `.ods` | |
+| `.xls` | Excel 97-2003 (BIFF8) and Excel 5.0/95 (BIFF5/7) |
+| `.xlsb` | not supported, re-save as `.xlsx` |
+
+The format is detected from the file content, not from its extension. Password protected (encrypted) workbooks are not supported and throw an `UnsupportedError`; corrupt files throw a `FormatException`.
+
+### Reading `.xls`
+
+`.xls` files are decoded by the same `SpreadsheetDecoder.decodeBytes` call:
+
+    var decoder = SpreadsheetDecoder.decodeBytes(bytes); // returns an XlsDecoder
+    var rows = decoder.tables['Sheet1']!.rows;
+
+Values are returned like for XLSX: numbers as `int`/`double`, text as `String`, booleans as `bool`, errors as text (`#DIV/0!`), and date/time cells as formatted strings (see `dateFormat` below). Cached formula results are returned, formulas are not evaluated. The 1904 date system is honoured.
 
 ## Usage
 
@@ -19,9 +41,6 @@ Spreadsheet Decoder is a library for decoding and updating spreadsheets for ODS 
       var table = decoder.tables['Sheet1'];
       var values = table.rows[0];
       ...
-      decoder.updateCell('Sheet1', 0, 0, 1337);
-      File(join(fullUri).writeAsBytesSync(decoder.encode());
-      ...
     }
 
 ### On client-side
@@ -35,9 +54,6 @@ Spreadsheet Decoder is a library for decoding and updating spreadsheets for ODS 
         var decoder = SpreadsheetDecoder.decodeBytes(reader.result);
         var table = decoder.tables['Sheet1'];
         var values = table.rows[0];
-        ...
-        decoder.updateCell('Sheet1', 0, 0, 1337);
-        var bytes = decoder.encode();
         ...
       });
     }

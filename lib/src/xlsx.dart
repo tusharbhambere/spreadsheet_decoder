@@ -332,6 +332,55 @@ String _formatDateTimeWithCode(DateTime date, String code) {
   return buf.toString();
 }
 
+/// Convert the numeric content [serial] of a cell according to its number
+/// format [fmtId].
+///
+/// Date and time formats (built-in or declared in [customFormats]) are
+/// rendered as strings, everything else is returned unchanged. Shared by the
+/// XLSX and XLS decoders so both render values identically. [epoch] is the
+/// date of serial `0` (`1899-12-30` for the 1900 date system, `1904-01-01`
+/// for the 1904 one).
+dynamic _formatNumericCell(
+    num serial, int fmtId, Map<int, String> customFormats, String dateFormat,
+    {DateTime? epoch}) {
+  // Excel can't store dates past year 9999 (serial 2958465): anything bigger,
+  // or not a number at all, can't be converted to a DateTime.
+  if (!serial.isFinite || serial.abs() > 3000000) {
+    return serial;
+  }
+  var delta = serial * 24 * 3600 * 1000;
+  // date
+  if (_isBuiltInDateFormat(fmtId)) {
+    var date = (epoch ?? DateTime.utc(1899, 12, 30))
+        .add(Duration(milliseconds: delta.toInt()));
+    return _formatDateTimeWithCode(date, dateFormat);
+  }
+  // time
+  if (_isBuiltInTimeFormat(fmtId)) {
+    var date = DateTime.utc(0).add(Duration(milliseconds: delta.toInt()));
+    return '${_twoDigits(date.hour)}:${_twoDigits(date.minute)}:${_twoDigits(date.second)}';
+  }
+  // Custom number format declared in <numFmts>. If the caller supplied a
+  // non-default [dateFormat], honour it for date cells; otherwise fall back to
+  // the workbook's own format code so the visible output matches Excel.
+  var workbookCode = customFormats[fmtId];
+  if (workbookCode != null) {
+    if (_isDateTimeFormatCode(workbookCode)) {
+      var date = (epoch ?? DateTime.utc(1899, 12, 30))
+          .add(Duration(milliseconds: delta.toInt()));
+      var code = dateFormat == SpreadsheetDecoder.defaultDateFormat
+          ? workbookCode
+          : dateFormat;
+      return _formatDateTimeWithCode(date, code);
+    }
+    if (_isTimeOnlyFormatCode(workbookCode)) {
+      var date = DateTime.utc(0).add(Duration(milliseconds: delta.toInt()));
+      return _formatDateTimeWithCode(date, workbookCode);
+    }
+  }
+  return serial;
+}
+
 /// Returns the coordinates from a cell name.
 /// "A1" returns [1, 1] and the "B3" return [2, 3].
 List cellCoordsFromCellId(String cellId) {
@@ -345,12 +394,41 @@ List cellCoordsFromCellId(String cellId) {
 }
 
 /// Read and parse XSLX spreadsheet
+///
+/// Also reads the other SpreadsheetML flavours that share the package
+/// layout: macro enabled workbooks (`.xlsm`) and templates (`.xltx`,
+/// `.xltm`). Macros are neither interpreted nor executed.
 class XlsxDecoder extends SpreadsheetDecoder {
-  @override
-  String get mediaType =>
+  // Workbook part content type -> [filename extension, media type]
+  static const Map<String, List<String>> _workbookTypes = {
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml':
+        [
+      '.xlsx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ],
+    'application/vnd.ms-excel.sheet.macroEnabled.main+xml': [
+      '.xlsm',
+      'application/vnd.ms-excel.sheet.macroEnabled.12'
+    ],
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml':
+        [
+      '.xltx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.template'
+    ],
+    'application/vnd.ms-excel.template.macroEnabled.main+xml': [
+      '.xltm',
+      'application/vnd.ms-excel.template.macroEnabled.12'
+    ],
+  };
+
+  String _mediaType =
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  String _extension = '.xlsx';
+
   @override
-  String get extension => '.xlsx';
+  String get mediaType => _mediaType;
+  @override
+  String get extension => _extension;
 
   final List<String> _sharedStrings = <String>[];
   final List<int> _numFormats = <int>[];
@@ -362,137 +440,36 @@ class XlsxDecoder extends SpreadsheetDecoder {
   final Map<String, String> _worksheetTargets = <String, String>{};
 
   XlsxDecoder(Archive archive,
-      {bool update = false,
-      String dateFormat = SpreadsheetDecoder.defaultDateFormat}) {
+      {String dateFormat = SpreadsheetDecoder.defaultDateFormat}) {
     _archive = archive;
-    _update = update;
     _dateFormat = dateFormat;
-    if (_update == true) {
-      _archiveFiles = <String, ArchiveFile>{};
-      _sheets = <String, XmlElement>{};
-      _xmlFiles = <String, XmlDocument>{};
-    }
     _tables = <String, SpreadsheetTable>{};
+    _parseContentType();
     _parseRelations();
     _parseStyles();
     _parseSharedStrings();
     _parseContent();
   }
 
-  @override
-  String dumpXmlContent([String? sheet]) {
-    if (sheet == null) {
-      var buffer = StringBuffer();
-      _sheets.forEach((name, document) {
-        buffer.writeln(name);
-        buffer.writeln(document.toXmlString(pretty: true));
-      });
-      return buffer.toString();
-    } else {
-      return _sheets[sheet]!.toXmlString(pretty: true);
+  /// The content type of `xl/workbook.xml` tells which flavour of the format
+  /// the file is (workbook or template, with or without macros).
+  void _parseContentType() {
+    var types = _archive.findFile('[Content_Types].xml');
+    if (types == null) {
+      return;
     }
-  }
-
-  @override
-  void insertColumn(String sheet, int columnIndex) {
-    super.insertColumn(sheet, columnIndex);
-
-    for (var row in _findRows(_sheets[sheet]!)) {
-      XmlElement? cell;
-      var cells = _findCells(row);
-
-      var currentIndex = 0; // cells could be empty
-      for (var currentCell in cells) {
-        currentIndex = _getCellNumber(currentCell) - 1;
-        if (currentIndex >= columnIndex) {
-          cell = currentCell;
-          break;
+    types.decompress();
+    var document = XmlDocument.parse(utf8.decode(types.content));
+    for (var node in document.findAllElements('Override')) {
+      if (node.getAttribute('PartName') == '/xl/workbook.xml') {
+        var type = _workbookTypes[node.getAttribute('ContentType')];
+        if (type != null) {
+          _extension = type[0];
+          _mediaType = type[1];
         }
-      }
-
-      if (cell != null) {
-        cells
-            .skipWhile((c) => c != cell)
-            .forEach((c) => _setCellColNumber(c, _getCellNumber(c) + 1));
-      }
-      // Nothing to do if cell == null
-    }
-  }
-
-  @override
-  void removeColumn(String sheet, int columnIndex) {
-    super.removeColumn(sheet, columnIndex);
-
-    for (var row in _findRows(_sheets[sheet]!)) {
-      XmlElement? cell;
-      var cells = _findCells(row);
-
-      var currentIndex = 0; // cells could be empty
-      for (var currentCell in cells) {
-        currentIndex = _getCellNumber(currentCell) - 1;
-        if (currentIndex >= columnIndex) {
-          cell = currentCell;
-          break;
-        }
-      }
-
-      if (cell != null) {
-        cells
-            .skipWhile((c) => c != cell)
-            .forEach((c) => _setCellColNumber(c, _getCellNumber(c) - 1));
-        cell.parent!.children.remove(cell);
+        break;
       }
     }
-  }
-
-  @override
-  void insertRow(String sheet, int rowIndex) {
-    super.insertRow(sheet, rowIndex);
-
-    var parent = _sheets[sheet]!;
-    if (rowIndex < _tables[sheet]!._maxRows - 1) {
-      var foundRow = _findRowByIndex(_sheets[sheet]!, rowIndex);
-      _insertRow(parent, foundRow, rowIndex);
-      parent.children
-          .whereType<XmlElement>()
-          .skipWhile((row) => row != foundRow)
-          .forEach((row) {
-        var rIndex = _getRowNumber(row) + 1;
-        _setRowNumber(row, rIndex);
-        _findCells(row).forEach((cell) {
-          _setCellRowNumber(cell, rIndex);
-        });
-      });
-    } else {
-      _insertRow(parent, null, rowIndex);
-    }
-  }
-
-  @override
-  void removeRow(String sheet, int rowIndex) {
-    super.removeRow(sheet, rowIndex);
-
-    var parent = _sheets[sheet]!;
-    var foundRow = _findRowByIndex(parent, rowIndex);
-    parent.children
-        .whereType<XmlElement>()
-        .skipWhile((row) => row != foundRow)
-        .forEach((row) {
-      var rIndex = _getRowNumber(row) - 1;
-      _setRowNumber(row, rIndex);
-      _findCells(row).forEach((cell) {
-        _setCellRowNumber(cell, rIndex);
-      });
-    });
-    parent.children.remove(foundRow);
-  }
-
-  @override
-  void updateCell(String sheet, int columnIndex, int rowIndex, dynamic value) {
-    super.updateCell(sheet, columnIndex, rowIndex, value);
-
-    var foundRow = _findRowByIndex(_sheets[sheet]!, rowIndex);
-    _updateCell(foundRow, columnIndex, rowIndex, value);
   }
 
   void _parseRelations() {
@@ -594,7 +571,12 @@ class XlsxDecoder extends SpreadsheetDecoder {
   void _parseTable(XmlElement node) {
     var name = node.getAttribute('name')!;
     var target =
-        _worksheetTargets[node.getAttribute('id', namespace: _relationships)]!;
+        _worksheetTargets[node.getAttribute('id', namespace: _relationships)];
+    // Chart sheets and dialog sheets are listed with the worksheets but have
+    // no cells.
+    if (target == null) {
+      return;
+    }
     var table = tables[name] = SpreadsheetTable(name);
 
     final namePath =
@@ -612,11 +594,6 @@ class XlsxDecoder extends SpreadsheetDecoder {
     _findRows(sheet).forEach((child) {
       _parseRow(child, table);
     });
-    if (_update == true) {
-      _sheets[name] = sheet;
-      _xmlFiles[namePath] = content;
-    }
-
     _normalizeTable(table);
   }
 
@@ -691,52 +668,12 @@ class XlsxDecoder extends SpreadsheetDecoder {
       case 'n':
       default:
         var s = node.getAttribute('s');
-        var valueNode = node.findElements('v');
-        var content = valueNode.first;
-        if (s != null) {
-          var fmtId = _numFormats[int.parse(s)];
-          // date
-          if (_isBuiltInDateFormat(fmtId)) {
-            var delta = num.parse(_parseValue(content)) * 24 * 3600 * 1000;
-            var date = DateTime(1899, 12, 30)
-                .add(Duration(milliseconds: delta.toInt()));
-            value = _formatDateTimeWithCode(date, _dateFormat);
-            // time
-          } else if (_isBuiltInTimeFormat(fmtId)) {
-            var delta = num.parse(_parseValue(content)) * 24 * 3600 * 1000;
-            var date = DateTime(0);
-            date = date.add(Duration(milliseconds: delta.toInt()));
-            value =
-                '${_twoDigits(date.hour)}:${_twoDigits(date.minute)}:${_twoDigits(date.second)}';
-            // number
-          } else if (_customNumFormats.containsKey(fmtId)) {
-            // Custom number format declared in <numFmts>. If the caller
-            // supplied a non-default [dateFormat], honour it for date
-            // cells; otherwise fall back to the workbook's own format
-            // code so the visible output matches Excel.
-            var workbookCode = _customNumFormats[fmtId]!;
-            var serial = num.parse(_parseValue(content));
-            if (_isDateTimeFormatCode(workbookCode)) {
-              var delta = serial * 24 * 3600 * 1000;
-              var date = DateTime(1899, 12, 30)
-                  .add(Duration(milliseconds: delta.toInt()));
-              var code = _dateFormat == SpreadsheetDecoder.defaultDateFormat
-                  ? workbookCode
-                  : _dateFormat;
-              value = _formatDateTimeWithCode(date, code);
-            } else if (_isTimeOnlyFormatCode(workbookCode)) {
-              var delta = serial * 24 * 3600 * 1000;
-              var date = DateTime(0).add(Duration(milliseconds: delta.toInt()));
-              value = _formatDateTimeWithCode(date, workbookCode);
-            } else {
-              value = serial;
-            }
-          } else {
-            value = num.parse(_parseValue(content));
-          }
-        } else {
-          value = num.parse(_parseValue(content));
-        }
+        var content = node.findElements('v').first;
+        var serial = num.parse(_parseValue(content));
+        value = s == null
+            ? serial
+            : _formatNumericCell(serial, _numFormats[int.parse(s)],
+                _customNumFormats, _dateFormat);
     }
     row.add(value);
 
@@ -762,125 +699,9 @@ class XlsxDecoder extends SpreadsheetDecoder {
       row.findElements('c');
 
   static int _getRowNumber(XmlElement row) => int.parse(row.getAttribute('r')!);
-  static void _setRowNumber(XmlElement row, int index) =>
-      row.getAttributeNode('r')!.value = index.toString();
 
   static int _getCellNumber(XmlElement cell) {
     var coords = cellCoordsFromCellId(cell.getAttribute('r')!);
     return coords[0];
-  }
-
-  static void _setCellColNumber(XmlElement cell, int colIndex) {
-    var attr = cell.getAttributeNode('r')!;
-    var coords = cellCoordsFromCellId(attr.value);
-    attr.value = '${numericToLetters(colIndex)}${coords[1]}';
-  }
-
-  static void _setCellRowNumber(XmlElement cell, int rowIndex) {
-    var attr = cell.getAttributeNode('r')!;
-    var coords = cellCoordsFromCellId(attr.value);
-    attr.value = '${numericToLetters(coords[0])}$rowIndex';
-  }
-
-  static XmlElement _findRowByIndex(XmlElement table, int rowIndex) {
-    XmlElement? row;
-    var rows = _findRows(table);
-
-    var currentIndex = 0;
-    for (var currentRow in rows) {
-      currentIndex = _getRowNumber(currentRow) - 1;
-      if (currentIndex >= rowIndex) {
-        row = currentRow;
-        break;
-      }
-    }
-
-    // Create row if required
-    if (row == null || currentIndex != rowIndex) {
-      row = _insertRow(table, row, rowIndex);
-    }
-
-    return row;
-  }
-
-  static XmlElement _updateCell(
-      XmlElement node, int columnIndex, int rowIndex, dynamic value) {
-    XmlElement? cell;
-    var cells = _findCells(node);
-
-    var currentIndex = 0; // cells could be empty
-    for (var currentCell in cells) {
-      currentIndex = _getCellNumber(currentCell) - 1;
-      if (currentIndex >= columnIndex) {
-        cell = currentCell;
-        break;
-      }
-    }
-
-    if (cell == null || currentIndex != columnIndex) {
-      cell = _insertCell(node, cell, columnIndex, rowIndex, value);
-    } else {
-      cell = _replaceCell(node, cell, columnIndex, rowIndex, value);
-    }
-
-    return cell;
-  }
-
-  static XmlElement _createRow(int rowIndex) {
-    var attributes = <XmlAttribute>[
-      XmlAttribute(XmlName('r'), (rowIndex + 1).toString()),
-    ];
-    return XmlElement(XmlName('row'), attributes, []);
-  }
-
-  static XmlElement _insertRow(
-      XmlElement table, XmlElement? lastRow, int rowIndex) {
-    var row = _createRow(rowIndex);
-    if (lastRow == null) {
-      table.children.add(row);
-    } else {
-      var index = table.children.indexOf(lastRow);
-      table.children.insert(index, row);
-    }
-    return row;
-  }
-
-  static XmlElement _insertCell(XmlElement row, XmlElement? lastCell,
-      int columnIndex, int rowIndex, dynamic value) {
-    var cell = _createCell(columnIndex, rowIndex, value);
-    if (lastCell == null) {
-      row.children.add(cell);
-    } else {
-      var index = row.children.indexOf(lastCell);
-      row.children.insert(index, cell);
-    }
-    return cell;
-  }
-
-  static XmlElement _replaceCell(XmlElement row, XmlElement? lastCell,
-      int columnIndex, int rowIndex, dynamic value) {
-    var index = lastCell == null ? 0 : row.children.indexOf(lastCell);
-    var cell = _createCell(columnIndex, rowIndex, value);
-    row.children
-      ..removeAt(index)
-      ..insert(index, cell);
-    return cell;
-  }
-
-  // TODO Manage value's type
-  static XmlElement _createCell(int columnIndex, int rowIndex, dynamic value) {
-    var attributes = <XmlAttribute>[
-      XmlAttribute(
-          XmlName('r'), '${numericToLetters(columnIndex + 1)}${rowIndex + 1}'),
-      XmlAttribute(XmlName('t'), 'inlineStr'),
-    ];
-    var children = value == null
-        ? <XmlElement>[]
-        : <XmlElement>[
-            XmlElement(XmlName('is'), [], [
-              XmlElement(XmlName('t'), [], [XmlText(value.toString())])
-            ]),
-          ];
-    return XmlElement(XmlName('c'), attributes, children);
   }
 }

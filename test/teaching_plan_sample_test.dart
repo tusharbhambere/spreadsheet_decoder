@@ -104,8 +104,8 @@ void logTable(SpreadsheetTable table) {
 
 void main() {
   group('Teaching plan sample excel file:', () {
-    test('decode xlsx without update', () {
-      var decoder = decode(filename, update: false);
+    test('decode xlsx', () {
+      var decoder = decode(filename);
       expect(decoder, isNotNull);
       expect(decoder.tables.isNotEmpty, isTrue);
       expect(decoder.tables.containsKey(sheetName), isTrue);
@@ -114,21 +114,6 @@ void main() {
       expect(table.maxRows, greaterThan(0));
       expect(table.maxCols, greaterThan(0));
       expect(table.rows.length, equals(table.maxRows));
-    });
-
-    test('decode xlsx with update', () {
-      var decoder = decode(filename, update: true);
-      expect(decoder, isNotNull);
-      expect(decoder.tables.containsKey(sheetName), isTrue);
-
-      var table = decoder.tables[sheetName]!;
-      expect(table.maxRows, greaterThan(0));
-      expect(table.maxCols, greaterThan(0));
-
-      // Test reading rows and specific cells
-      for (var row in table.rows) {
-        expect(row, isA<List>());
-      }
     });
 
     test('logs parsed data', () {
@@ -209,21 +194,6 @@ void main() {
 
       // Text cells are not reformatted — they were never date serials.
       expect(table.rows[4][planningDateCol], equals('16/9/2026'));
-    });
-
-    test('update round-trip preserves decoded PlanningDate values', () {
-      var original = decode(filename, update: true);
-      var reopened = SpreadsheetDecoder.decodeBytes(original.encode());
-
-      var before = original.tables[sheetName]!;
-      var after = reopened.tables[sheetName]!;
-
-      expect(after.maxRows, equals(before.maxRows));
-      for (var i = 0; i < before.rows.length; i++) {
-        expect(after.rows[i][planningDateCol],
-            equals(before.rows[i][planningDateCol]),
-            reason: 'row $i');
-      }
     });
   });
 }

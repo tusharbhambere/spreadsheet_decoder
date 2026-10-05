@@ -11,16 +11,8 @@ String readBase64(String filename) {
   return base64Encode(_readBytes(filename));
 }
 
-SpreadsheetDecoder decode(String filename,
-    {bool update = false, String? dateFormat}) {
+SpreadsheetDecoder decode(String filename, {String? dateFormat}) {
   return SpreadsheetDecoder.decodeBytes(_readBytes(filename),
-      update: update,
       verify: true,
       dateFormat: dateFormat ?? SpreadsheetDecoder.defaultDateFormat);
-}
-
-void save(String file, List<int> data) {
-  File(file)
-    ..createSync(recursive: true)
-    ..writeAsBytesSync(data);
 }
